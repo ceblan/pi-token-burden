@@ -7,6 +7,7 @@ export {
   removeFrontmatterField,
   saveSettings,
   setFrontmatterField,
+  writeFileSyncAtomic,
 } from "./skill-visibility-store.js";
 
 /** Compatibility wrapper for Skill Visibility Store persistence. */

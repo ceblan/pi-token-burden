@@ -108,6 +108,98 @@ export function removeFrontmatterField(content: string, key: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Atomic file writes
+// ---------------------------------------------------------------------------
+
+interface AtomicWriteGuard {
+  /**
+   * Expected current content of the target file; `null` means the file must
+   * be absent. When provided, the file is re-read after the temp file is
+   * staged and compared immediately before the rename. On mismatch the temp
+   * file is removed and the write aborts — an external edit is never
+   * overwritten.
+   */
+  expected: string | null;
+}
+
+/**
+ * Write `content` to `filePath` atomically: temp file in the same directory,
+ * file mode preserved, then rename (atomic on POSIX).
+ *
+ * Symlink guard: `renameSync` would replace a symlink with a regular file,
+ * destroying the link while leaving its target untouched (`writeFileSync`
+ * follows links, so the pre-atomic code preserved them). Resolve to the real
+ * path first. `realpathSync` fails when the file does not exist yet (new
+ * frontmatter creation) — then `filePath` is used as-is.
+ */
+export function writeFileSyncAtomic(
+  filePath: string,
+  content: string,
+  guard?: AtomicWriteGuard
+): void {
+  let resolvedPath = filePath;
+  try {
+    resolvedPath = fs.realpathSync(filePath);
+  } catch {
+    // File does not exist yet — write to filePath directly.
+  }
+
+  const tmp = path.join(
+    path.dirname(resolvedPath),
+    `.pi-token-burden-${process.pid}-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}.tmp`
+  );
+
+  let mode: number | undefined;
+  try {
+    ({ mode } = fs.statSync(resolvedPath));
+  } catch {
+    // File may not exist yet.
+  }
+
+  try {
+    fs.writeFileSync(tmp, content, "utf8");
+    if (mode !== undefined) {
+      fs.chmodSync(tmp, mode);
+    }
+
+    if (guard) {
+      // Re-read immediately before the rename so the unguarded window is as
+      // small as POSIX allows (no compare-and-swap primitive exists).
+      let current: string | null;
+      try {
+        current = fs.readFileSync(resolvedPath, "utf8");
+      } catch (error) {
+        const { code } = error as NodeJS.ErrnoException;
+        // Only ENOENT means "absent". ENOTDIR/EISDIR are invalid-path
+        // errors and must surface, never be masked as a missing file.
+        if (code === "ENOENT") {
+          current = null;
+        } else {
+          throw error;
+        }
+      }
+      if (current !== guard.expected) {
+        throw new Error(
+          `${filePath} was modified externally while changes were being applied. ` +
+            "Aborted the write to avoid overwriting the external edit — re-run the command and retry."
+        );
+      }
+    }
+
+    fs.renameSync(tmp, resolvedPath);
+  } catch (error) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // Best-effort temp cleanup.
+    }
+    throw error;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Apply changes
 // ---------------------------------------------------------------------------
 
@@ -148,23 +240,49 @@ function buildFrontmatterContent(
     : removeFrontmatterField(content, "disable-model-invocation");
 }
 
-function rollbackFrontmatterWrites(
-  writtenPaths: string[],
-  originalContents: Map<string, string>
-): void {
-  for (let i = writtenPaths.length - 1; i >= 0; i--) {
-    const filePath = writtenPaths[i];
-    const original = originalContents.get(filePath);
-    if (original === undefined) {
-      continue;
-    }
+interface FrontmatterWriteRecord {
+  filePath: string;
+  originalContent: string;
+  writtenContent: string;
+}
 
+/**
+ * Restore original frontmatter content, newest write first.
+ *
+ * Divergence-aware: a file is only restored when its current on-disk content
+ * still equals what we wrote. If it changed since (external edit), restoring
+ * would clobber that edit — skip it and report the path instead.
+ *
+ * Returns the paths that could not be rolled back, for error reporting.
+ */
+function rollbackFrontmatterWrites(
+  records: FrontmatterWriteRecord[]
+): string[] {
+  const skipped: string[] = [];
+  for (let i = records.length - 1; i >= 0; i--) {
+    const { filePath, originalContent, writtenContent } = records[i];
     try {
-      fs.writeFileSync(filePath, original);
+      const current = fs.readFileSync(filePath, "utf8");
+      if (current !== writtenContent) {
+        skipped.push(filePath);
+        continue;
+      }
+      writeFileSyncAtomic(filePath, originalContent);
     } catch {
-      // Best-effort rollback.
+      skipped.push(filePath);
     }
   }
+  return skipped;
+}
+
+function formatRollbackSkipped(skipped: string[]): string {
+  if (skipped.length === 0) {
+    return "";
+  }
+  return (
+    `. Rollback skipped ${skipped.length} file(s) that changed on disk after ` +
+    `being written (manual reconciliation required): ${skipped.join(", ")}`
+  );
 }
 
 function normalizeChangePath(filePath: string): string {
@@ -257,31 +375,33 @@ function applyChanges(
     existingDisableDirs.add(skillDir);
   }
 
-  const originalContents = new Map<string, string>();
-  const writtenFrontmatterPaths: string[] = [];
+  const writeRecords: FrontmatterWriteRecord[] = [];
 
   // Apply frontmatter updates first. If this fails, settings are left untouched.
   try {
     for (const [filePath, disableModelInvocation] of frontmatterUpdates) {
       const originalContent = fs.readFileSync(filePath, "utf8");
-      originalContents.set(filePath, originalContent);
-
       const newContent = buildFrontmatterContent(
         originalContent,
         disableModelInvocation
       );
 
       if (newContent !== originalContent) {
-        fs.writeFileSync(filePath, newContent);
-        writtenFrontmatterPaths.push(filePath);
+        writeFileSyncAtomic(filePath, newContent);
+        writeRecords.push({
+          filePath,
+          originalContent,
+          writtenContent: newContent,
+        });
       }
     }
   } catch (error) {
-    rollbackFrontmatterWrites(writtenFrontmatterPaths, originalContents);
+    const skipped = rollbackFrontmatterWrites(writeRecords);
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to update skill frontmatter: ${message}`, {
-      cause: error,
-    });
+    throw new Error(
+      `Failed to update skill frontmatter: ${message}${formatRollbackSkipped(skipped)}`,
+      { cause: error }
+    );
   }
 
   // Persist settings; roll back frontmatter if this write fails.
@@ -289,11 +409,12 @@ function applyChanges(
   try {
     saveSettings(settings, settingsPath);
   } catch (error) {
-    rollbackFrontmatterWrites(writtenFrontmatterPaths, originalContents);
+    const skipped = rollbackFrontmatterWrites(writeRecords);
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to save settings: ${message}`, {
-      cause: error,
-    });
+    throw new Error(
+      `Failed to save settings: ${message}${formatRollbackSkipped(skipped)}`,
+      { cause: error }
+    );
   }
 }
 
