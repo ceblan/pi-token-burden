@@ -248,6 +248,8 @@ const extension: ExtensionFactory = (pi) => {
         };
       };
 
+      let needsReload = false;
+
       await showReport(
         parsed,
         contextWindow,
@@ -267,8 +269,9 @@ const extension: ExtensionFactory = (pi) => {
           }
 
           if (outcome.saved) {
+            needsReload = true;
             ctx.ui.notify(
-              `Skills updated: ${outcome.summary}. Use /reload or restart for changes to take effect.`,
+              `Skills updated: ${outcome.summary}. Reloading…`,
               "info"
             );
           }
@@ -277,6 +280,12 @@ const extension: ExtensionFactory = (pi) => {
         },
         onRunTrace
       );
+
+      // The overlay is closed — safe to reload. Multiple Ctrl+S inside one
+      // overlay session coalesce into a single reload here.
+      if (needsReload) {
+        await ctx.reload();
+      }
     },
   });
 };
