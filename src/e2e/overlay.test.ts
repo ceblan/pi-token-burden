@@ -138,13 +138,12 @@ describe("overlay — tools view with inactive tools", () => {
       agentDir,
       piFlags: [
         "--no-session",
-        "--no-memory",
         "--provider",
         "zai",
         "--model",
         "glm-4.7",
-        "--tools",
-        "read",
+        "--exclude-tools",
+        "bash",
       ],
     });
     harness.start();
@@ -163,11 +162,20 @@ describe("overlay — tools view with inactive tools", () => {
     const collapsed = harness.capture().join("\n");
     expect(collapsed).toContain("Inactive (");
     expect(collapsed).toContain("if enabled");
-    expect(collapsed).not.toContain("bash");
+    // bash is hidden inside the collapsed group — no tool row shows it
+    // (the pi chrome outside the overlay contains a literal "! bash" hint).
+    expect(collapsed).not.toMatch(/[▸·] bash/);
   });
 
   it("should expand inactive tools after navigating past active tools", () => {
-    harness.sendKeys("Down");
+    // Walk the cursor down to the collapsed inactive group row, then expand.
+    for (let i = 0; i < 8; i++) {
+      const cursorLine = harness.capture().find((l) => l.includes("▸"));
+      if (cursorLine?.includes("Inactive (")) {
+        break;
+      }
+      harness.sendKeys("Down");
+    }
     harness.sendKeys("Enter");
 
     const expanded = harness.waitFor("bash", 5000).join("\n");

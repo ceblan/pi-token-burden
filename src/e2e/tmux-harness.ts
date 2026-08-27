@@ -55,7 +55,6 @@ export class TmuxHarness {
     this.height = opts.height ?? 40;
     this.piFlags = opts.piFlags ?? [
       "--no-session",
-      "--no-memory",
       "--provider",
       "zai",
       "--model",

@@ -4,13 +4,13 @@ import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   matchesKey,
   truncateToWidth,
   visibleWidth,
-} from "@mariozechner/pi-tui";
-import type { TUI } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 
 import type { BasePromptTraceResult, TraceBucket } from "./base-trace/index.js";
 import { DisableMode } from "./enums.js";

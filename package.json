@@ -41,6 +41,8 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.3",
+    "@earendil-works/pi-tui": "^0.84.3",
     "@types/node": "^25.3.2",
     "changelogen": "^0.6.2",
     "fast-check": "^4.5.3",
@@ -56,8 +58,8 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
     "@sinclair/typebox": "*"
   },
   "packageManager": "pnpm@10.3.0",

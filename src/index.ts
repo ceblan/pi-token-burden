@@ -4,8 +4,8 @@ import * as path from "node:path";
 import {
   discoverAndLoadExtensions,
   SettingsManager,
-} from "@mariozechner/pi-coding-agent";
-import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import {
   attributeBasePrompt,
@@ -73,13 +73,15 @@ let lastWireCapture: WireCapture | null = null;
 
 const extension: ExtensionFactory = (pi) => {
   pi.on("before_provider_request", (event, ctx) => {
-    const payload = (event as { payload?: unknown }).payload;
+    const { payload } = event as { payload?: unknown };
     const systemText = extractSystemTextFromPayload(payload);
     const toolsJson = extractToolsJsonFromPayload(payload);
     // Only cache payloads that carry both a system prompt and the tool list.
     // Side requests (compaction, summaries, titles) use a different system
     // prompt and no tools — caching those would poison the next report.
-    if (!systemText || !toolsJson) return;
+    if (!systemText || !toolsJson) {
+      return;
+    }
     lastWireCapture = {
       systemPrompt: systemText,
       toolsJson,
@@ -122,19 +124,19 @@ const extension: ExtensionFactory = (pi) => {
           ? wirePrompt.slice(basePrompt.length)
           : null;
         const tokens =
-          appends !== null
-            ? estimateTokens(appends)
-            : Math.max(
+          appends === null
+            ? Math.max(
                 0,
                 estimateTokens(wirePrompt) - estimateTokens(basePrompt)
-              );
+              )
+            : estimateTokens(appends);
         if (tokens > 0) {
           parsed.sections.push({
             label: "Per-request appends (before_agent_start)",
             chars:
-              appends !== null
-                ? appends.length
-                : Math.abs(wirePrompt.length - basePrompt.length),
+              appends === null
+                ? Math.abs(wirePrompt.length - basePrompt.length)
+                : appends.length,
             tokens,
             content: appends ?? undefined,
           });

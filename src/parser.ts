@@ -121,6 +121,21 @@ function isPiContextFilePath(filePath: string): boolean {
 
 /** Parse pi context-file headings inside the Project Context section. */
 function parseContextFileSpans(contextBlock: string): ContextFileSpan[] {
+  // pi >=0.84 wraps context files in <project_instructions path="..."> tags
+  // inside a <project_context> block; older versions used `## /path`
+  // headings under a `# Project Context` section.
+  if (contextBlock.includes("<project_instructions")) {
+    const tagPattern = /<project_instructions path="([^"]+)">\r?\n/g;
+    const matches = [...contextBlock.matchAll(tagPattern)];
+    const blockEnd = contextBlock.indexOf("</project_context>");
+    const lastEnd = blockEnd === -1 ? contextBlock.length : blockEnd;
+    return matches.map((match, index) => ({
+      path: match[1],
+      start: match.index,
+      end: index + 1 < matches.length ? matches[index + 1].index : lastEnd,
+    }));
+  }
+
   const headingPattern = /^## (\/[^\r\n]+)$/gm;
   const matches = [...contextBlock.matchAll(headingPattern)].filter((match) =>
     isPiContextFilePath(match[1])
@@ -220,7 +235,10 @@ export function parseSystemPrompt(prompt: string): ParsedPrompt {
   const sections: PromptSection[] = [];
   const skills: SkillEntry[] = [];
 
-  const projectCtxIdx = prompt.indexOf("\n\n# Project Context\n");
+  const projectCtxIdx = firstPositive(
+    prompt.indexOf("\n\n# Project Context\n"),
+    prompt.indexOf("\n\n<project_context>\n")
+  );
   const skillsPreambleIdx = prompt.indexOf(
     "\n\nThe following skills provide specialized instructions"
   );

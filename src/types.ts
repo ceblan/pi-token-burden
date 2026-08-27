@@ -102,3 +102,11 @@ export type SkillSaveOutcome =
   | { ok: true; saved: false }
   | { ok: true; saved: true; summary: string }
   | { ok: false; saved: false; errorMessage: string };
+
+/** Identity of the context a wire payload was captured in. */
+export interface WireFingerprintInput {
+  api?: string;
+  provider?: string;
+  id?: string;
+  activeTools: string[];
+}
