@@ -27,6 +27,11 @@ import {
   loadSettings,
 } from "./skill-visibility-store.js";
 import { loadAllSkills } from "./skills.js";
+import {
+  computeWireFingerprint,
+  extractSystemTextFromPayload,
+  extractToolsJsonFromPayload,
+} from "./wire-payload.js";
 
 /**
  * Resolve the agent directory, matching pi's own resolution logic:
@@ -47,12 +52,94 @@ function getAgentDir(): string {
   return path.join(os.homedir(), ".pi", "agent");
 }
 
+// ---------------------------------------------------------------------------
+// Wire payload capture (before_provider_request)
+//
+// See wire-payload.ts for why the wire payload is the measurement ground truth.
+// The capture is fingerprinted with the model identity and active tool set at
+// capture time and only used while that fingerprint still matches — tool
+// activation, model switches, and reloads all rebuild the assembled prompt, so
+// a stale capture would misreport them.
+// ---------------------------------------------------------------------------
+
+interface WireCapture {
+  systemPrompt: string;
+  toolsJson: string | null;
+  fingerprint: string;
+  capturedAt: string;
+}
+
+let lastWireCapture: WireCapture | null = null;
+
 const extension: ExtensionFactory = (pi) => {
+  pi.on("before_provider_request", (event, ctx) => {
+    const payload = (event as { payload?: unknown }).payload;
+    const systemText = extractSystemTextFromPayload(payload);
+    const toolsJson = extractToolsJsonFromPayload(payload);
+    // Only cache payloads that carry both a system prompt and the tool list.
+    // Side requests (compaction, summaries, titles) use a different system
+    // prompt and no tools — caching those would poison the next report.
+    if (!systemText || !toolsJson) return;
+    lastWireCapture = {
+      systemPrompt: systemText,
+      toolsJson,
+      fingerprint: computeWireFingerprint({
+        api: ctx.model?.api,
+        provider: ctx.model?.provider,
+        id: ctx.model?.id,
+        activeTools: pi.getActiveTools(),
+      }),
+      capturedAt: new Date().toISOString(),
+    };
+    // Deliberately return nothing: the payload must reach the provider
+    // unmodified. This handler is observation-only.
+  });
+
   pi.registerCommand("token-burden", {
     description: "Show token budget breakdown and manage skills",
     handler: async (_args, ctx) => {
-      const prompt = ctx.getSystemPrompt();
+      const basePrompt = ctx.getSystemPrompt();
+      const currentFingerprint = computeWireFingerprint({
+        api: ctx.model?.api,
+        provider: ctx.model?.provider,
+        id: ctx.model?.id,
+        activeTools: pi.getActiveTools(),
+      });
+      const wire =
+        lastWireCapture && lastWireCapture.fingerprint === currentFingerprint
+          ? lastWireCapture
+          : null;
+      const wirePrompt = wire?.systemPrompt ?? null;
+      // Prefer the payload actually sent to the provider: it includes any
+      // per-request appends contributed by before_agent_start handlers.
+      const prompt = wirePrompt ?? basePrompt;
       const parsed = parseSystemPrompt(prompt);
+
+      // Surface per-request appends the base prompt does not know about, so
+      // their cost is visible instead of hidden inside the unaccounted tail.
+      if (wirePrompt && wirePrompt !== basePrompt) {
+        const appends = wirePrompt.startsWith(basePrompt)
+          ? wirePrompt.slice(basePrompt.length)
+          : null;
+        const tokens =
+          appends !== null
+            ? estimateTokens(appends)
+            : Math.max(
+                0,
+                estimateTokens(wirePrompt) - estimateTokens(basePrompt)
+              );
+        if (tokens > 0) {
+          parsed.sections.push({
+            label: "Per-request appends (before_agent_start)",
+            chars:
+              appends !== null
+                ? appends.length
+                : Math.abs(wirePrompt.length - basePrompt.length),
+            tokens,
+            content: appends ?? undefined,
+          });
+        }
+      }
 
       // Add tool definitions section (function schemas sent via tool-calling API)
       const allTools = pi.getAllTools();
@@ -63,6 +150,25 @@ const extension: ExtensionFactory = (pi) => {
         toolEnvelopeForModel(ctx.model?.api, ctx.model?.provider)
       );
       if (toolSection) {
+        // Annotate with the actual serialized tools payload when a provider
+        // request has been observed, next to the simulated envelope variants.
+        if (wire?.toolsJson && toolSection.tools) {
+          const wireTools = wire.toolsJson;
+          const variants =
+            toolSection.tools.variants ?? (toolSection.tools.variants = []);
+          let pretty = wireTools;
+          try {
+            pretty = JSON.stringify(JSON.parse(wireTools), null, 2);
+          } catch {
+            // keep compact form
+          }
+          variants.push({
+            name: "wire payload (actual)",
+            chars: wireTools.length,
+            tokens: estimateTokens(wireTools),
+            content: pretty,
+          });
+        }
         parsed.sections.push(toolSection);
         parsed.totalTokens += toolSection.tokens;
         parsed.totalChars += toolSection.chars;
