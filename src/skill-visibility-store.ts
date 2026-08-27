@@ -58,26 +58,26 @@ export function setFrontmatterField(
   const rest = content.slice(endIndex + 4);
   const lines = frontmatter.split("\n");
 
-  let found = false;
-  for (let i = 0; i < lines.length; i++) {
-    const colonIndex = lines[i].indexOf(":");
-    if (colonIndex === -1) {
+  let replaced = false;
+  const nextLines: string[] = [];
+  for (const line of lines) {
+    const colonIndex = line.indexOf(":");
+    if (colonIndex !== -1 && line.slice(0, colonIndex).trim() === key) {
+      if (!replaced) {
+        nextLines.push(`${key}: ${value}`);
+        replaced = true;
+      }
+      // Subsequent duplicate keys are dropped (collapse to one entry).
       continue;
     }
-
-    const lineKey = lines[i].slice(0, colonIndex).trim();
-    if (lineKey === key) {
-      lines[i] = `${key}: ${value}`;
-      found = true;
-      break;
-    }
+    nextLines.push(line);
   }
 
-  if (!found) {
-    lines.push(`${key}: ${value}`);
+  if (!replaced) {
+    nextLines.push(`${key}: ${value}`);
   }
 
-  return `---\n${lines.join("\n")}\n---${rest}`;
+  return `---\n${nextLines.join("\n")}\n---${rest}`;
 }
 
 export function removeFrontmatterField(content: string, key: string): string {

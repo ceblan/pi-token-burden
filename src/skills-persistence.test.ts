@@ -62,6 +62,22 @@ describe("setFrontmatterField()", () => {
     expect(result).toContain("disable-model-invocation: true");
     expect(result).toContain("# Just markdown");
   });
+
+  it("should collapse duplicate keys, keeping a single updated entry", () => {
+    const content =
+      "---\nname: test\ndisable-model-invocation: false\ndisable-model-invocation: false\n---\n# Content";
+
+    const result = setFrontmatterField(
+      content,
+      "disable-model-invocation",
+      "true"
+    );
+
+    expect(result.split("disable-model-invocation:")).toHaveLength(2);
+    expect(result).toContain("disable-model-invocation: true");
+    expect(result).toContain("name: test");
+    expect(result).toContain("# Content");
+  });
 });
 
 // -- removeFrontmatterField() -------------------------------------------------
