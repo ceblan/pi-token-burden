@@ -14,18 +14,200 @@ import { DisableMode } from "./enums.js";
 import type { Settings, SkillInfo } from "./types.js";
 
 // ---------------------------------------------------------------------------
+// Atomic file writes
+// ---------------------------------------------------------------------------
+
+interface AtomicWriteGuard {
+  /**
+   * Expected current content of the target file; `null` means the file must
+   * be absent. When provided, the file is re-read after the temp file is
+   * staged and compared immediately before the rename. On mismatch the temp
+   * file is removed and the write aborts — an external edit is never
+   * overwritten.
+   */
+  expected: string | null;
+}
+
+/**
+ * Write `content` to `filePath` atomically: temp file in the same directory,
+ * file mode preserved, then rename (atomic on POSIX).
+ *
+ * Symlink guard: `renameSync` would replace a symlink with a regular file,
+ * destroying the link while leaving its target untouched (`writeFileSync`
+ * follows links, so the pre-atomic code preserved them). Resolve to the real
+ * path first. `realpathSync` fails when the file does not exist yet (new
+ * frontmatter creation) — then `filePath` is used as-is.
+ */
+export function writeFileSyncAtomic(
+  filePath: string,
+  content: string,
+  guard?: AtomicWriteGuard
+): void {
+  let resolvedPath = filePath;
+  try {
+    resolvedPath = fs.realpathSync(filePath);
+  } catch {
+    // File does not exist yet — write to filePath directly.
+  }
+
+  const tmp = path.join(
+    path.dirname(resolvedPath),
+    `.pi-token-burden-${process.pid}-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}.tmp`
+  );
+
+  let mode: number | undefined;
+  try {
+    ({ mode } = fs.statSync(resolvedPath));
+  } catch {
+    // File may not exist yet.
+  }
+
+  try {
+    fs.writeFileSync(tmp, content, "utf8");
+    if (mode !== undefined) {
+      fs.chmodSync(tmp, mode);
+    }
+
+    if (guard) {
+      // Re-read immediately before the rename so the unguarded window is as
+      // small as POSIX allows (no compare-and-swap primitive exists).
+      let current: string | null;
+      try {
+        current = fs.readFileSync(resolvedPath, "utf8");
+      } catch (error) {
+        const { code } = error as NodeJS.ErrnoException;
+        // Only ENOENT means "absent". ENOTDIR/EISDIR are invalid-path
+        // errors and must surface, never be masked as a missing file.
+        if (code === "ENOENT") {
+          current = null;
+        } else {
+          throw error;
+        }
+      }
+      if (current !== guard.expected) {
+        throw new Error(
+          `${filePath} was modified externally while changes were being applied. ` +
+            "Aborted the write to avoid overwriting the external edit — re-run the command and retry."
+        );
+      }
+    }
+
+    fs.renameSync(tmp, resolvedPath);
+  } catch (error) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // Best-effort temp cleanup.
+    }
+    throw error;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Settings file I/O
 // ---------------------------------------------------------------------------
 
-export function loadSettings(settingsPath: string): Settings {
-  try {
-    if (fs.existsSync(settingsPath)) {
-      return JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-    }
-  } catch {
-    // Ignore
+interface SettingsSnapshot {
+  /** Whether settings.json existed (and was readable) at capture time. */
+  exists: boolean;
+  /** Raw file text at capture time; null when the file was absent. */
+  rawText: string | null;
+  /** Parsed settings, always derived from rawText in the same read. */
+  parsed: Settings;
+}
+
+/**
+ * Reject JSON that parses but is not a settings object we can safely merge
+ * into. A root array/primitive would be silently replaced by an object on
+ * save; a non-array `skills` would be iterated element-by-element (chars of
+ * a string) and rewritten mangled; a non-string `skills` element is dropped
+ * by the rebuild loop on every save (silent data loss); a non-array
+ * `packages` crashes `loadAllSkills`, which calls array methods on it right
+ * after `loadSettings` — outside the load try/catch in index.ts. All are
+ * recoverable configs — refuse to overwrite instead. `skills` elements must
+ * be strings, matching the declared `Settings` schema; `packages` elements
+ * stay as permissive as the readers (they legitimately mix strings and
+ * source objects).
+ */
+function assertSettingsShape(
+  value: unknown,
+  settingsPath: string
+): asserts value is Settings {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(
+      `${settingsPath} contains valid JSON but is not a settings object ` +
+        "(root must be an object, not an array or primitive). " +
+        "Refusing to overwrite — fix or remove the file manually."
+    );
   }
-  return {};
+  const { skills, packages } = value as {
+    skills?: unknown;
+    packages?: unknown;
+  };
+  if (skills !== undefined) {
+    if (!Array.isArray(skills)) {
+      throw new TypeError(
+        `${settingsPath} contains valid JSON but is not a settings object ` +
+          '("skills" must be an array). ' +
+          "Refusing to overwrite — fix or remove the file manually."
+      );
+    }
+    if (skills.some((entry) => typeof entry !== "string")) {
+      throw new TypeError(
+        `${settingsPath} contains valid JSON but is not a settings object ` +
+          '("skills" must contain only strings). ' +
+          "Refusing to overwrite — fix or remove the file manually."
+      );
+    }
+  }
+  if (packages !== undefined && !Array.isArray(packages)) {
+    throw new TypeError(
+      `${settingsPath} contains valid JSON but is not a settings object ` +
+        '("packages" must be an array). ' +
+        "Refusing to overwrite — fix or remove the file manually."
+    );
+  }
+}
+
+/**
+ * Read settings.json exactly once, capturing raw text and parsed value from
+ * the same read. Reading twice (parse from one read, baseline from another)
+ * would open a race where a concurrent edit is seen by one read but not the
+ * other. Only ENOENT maps to the absent sentinel (a creatable missing file);
+ * ENOTDIR/EISDIR mean an invalid path and surface as errors.
+ */
+export function readSettingsSnapshot(settingsPath: string): SettingsSnapshot {
+  let rawText: string;
+  try {
+    rawText = fs.readFileSync(settingsPath, "utf8");
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException;
+    if (code === "ENOENT") {
+      return { exists: false, rawText: null, parsed: {} };
+    }
+    throw error;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `${settingsPath} exists but is not valid JSON: ${message}. ` +
+        "Refusing to overwrite — fix or remove the file manually.",
+      { cause: error }
+    );
+  }
+
+  assertSettingsShape(parsed, settingsPath);
+  return { exists: true, rawText, parsed };
+}
+
+export function loadSettings(settingsPath: string): Settings {
+  return readSettingsSnapshot(settingsPath).parsed;
 }
 
 export function saveSettings(settings: Settings, settingsPath: string): void {
@@ -33,7 +215,7 @@ export function saveSettings(settings: Settings, settingsPath: string): void {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  writeFileSyncAtomic(settingsPath, JSON.stringify(settings, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -175,98 +357,6 @@ export function removeFrontmatterField(content: string, key: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Atomic file writes
-// ---------------------------------------------------------------------------
-
-interface AtomicWriteGuard {
-  /**
-   * Expected current content of the target file; `null` means the file must
-   * be absent. When provided, the file is re-read after the temp file is
-   * staged and compared immediately before the rename. On mismatch the temp
-   * file is removed and the write aborts — an external edit is never
-   * overwritten.
-   */
-  expected: string | null;
-}
-
-/**
- * Write `content` to `filePath` atomically: temp file in the same directory,
- * file mode preserved, then rename (atomic on POSIX).
- *
- * Symlink guard: `renameSync` would replace a symlink with a regular file,
- * destroying the link while leaving its target untouched (`writeFileSync`
- * follows links, so the pre-atomic code preserved them). Resolve to the real
- * path first. `realpathSync` fails when the file does not exist yet (new
- * frontmatter creation) — then `filePath` is used as-is.
- */
-export function writeFileSyncAtomic(
-  filePath: string,
-  content: string,
-  guard?: AtomicWriteGuard
-): void {
-  let resolvedPath = filePath;
-  try {
-    resolvedPath = fs.realpathSync(filePath);
-  } catch {
-    // File does not exist yet — write to filePath directly.
-  }
-
-  const tmp = path.join(
-    path.dirname(resolvedPath),
-    `.pi-token-burden-${process.pid}-${Date.now()}-${Math.random()
-      .toString(16)
-      .slice(2)}.tmp`
-  );
-
-  let mode: number | undefined;
-  try {
-    ({ mode } = fs.statSync(resolvedPath));
-  } catch {
-    // File may not exist yet.
-  }
-
-  try {
-    fs.writeFileSync(tmp, content, "utf8");
-    if (mode !== undefined) {
-      fs.chmodSync(tmp, mode);
-    }
-
-    if (guard) {
-      // Re-read immediately before the rename so the unguarded window is as
-      // small as POSIX allows (no compare-and-swap primitive exists).
-      let current: string | null;
-      try {
-        current = fs.readFileSync(resolvedPath, "utf8");
-      } catch (error) {
-        const { code } = error as NodeJS.ErrnoException;
-        // Only ENOENT means "absent". ENOTDIR/EISDIR are invalid-path
-        // errors and must surface, never be masked as a missing file.
-        if (code === "ENOENT") {
-          current = null;
-        } else {
-          throw error;
-        }
-      }
-      if (current !== guard.expected) {
-        throw new Error(
-          `${filePath} was modified externally while changes were being applied. ` +
-            "Aborted the write to avoid overwriting the external edit — re-run the command and retry."
-        );
-      }
-    }
-
-    fs.renameSync(tmp, resolvedPath);
-  } catch (error) {
-    try {
-      fs.unlinkSync(tmp);
-    } catch {
-      // Best-effort temp cleanup.
-    }
-    throw error;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Apply changes
 // ---------------------------------------------------------------------------
 
@@ -367,7 +457,10 @@ function applyChanges(
     agentDir ?? path.join(process.env.HOME ?? "", ".pi", "agent");
   const settingsBaseDir = path.dirname(settingsPath);
 
-  const settings = loadSettings(settingsPath);
+  // Single read: parsed settings and the divergence baseline come from the
+  // same snapshot. A corrupt file throws here, BEFORE any frontmatter write.
+  const settingsSnapshot = readSettingsSnapshot(settingsPath);
+  const settings = settingsSnapshot.parsed;
   const existingSkills = settings.skills ?? [];
   const newSkills: string[] = [];
 
@@ -471,10 +564,19 @@ function applyChanges(
     );
   }
 
-  // Persist settings; roll back frontmatter if this write fails.
+  // Persist settings; roll back frontmatter if this write fails. The guard
+  // re-reads the file inside writeFileSyncAtomic, after the temp is staged
+  // and immediately before the rename — aborting instead of overwriting an
+  // external edit (another pi instance, manual edit, merge conflict).
   settings.skills = newSkills;
   try {
-    saveSettings(settings, settingsPath);
+    const settingsDir = path.dirname(settingsPath);
+    if (!fs.existsSync(settingsDir)) {
+      fs.mkdirSync(settingsDir, { recursive: true });
+    }
+    writeFileSyncAtomic(settingsPath, JSON.stringify(settings, null, 2), {
+      expected: settingsSnapshot.rawText,
+    });
   } catch (error) {
     const skipped = rollbackFrontmatterWrites(writeRecords);
     const message = error instanceof Error ? error.message : String(error);

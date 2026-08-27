@@ -27,6 +27,7 @@ import {
   loadSettings,
 } from "./skill-visibility-store.js";
 import { loadAllSkills } from "./skills.js";
+import type { Settings } from "./types.js";
 import {
   computeWireFingerprint,
   extractSystemTextFromPayload,
@@ -186,7 +187,18 @@ const extension: ExtensionFactory = (pi) => {
       const agentDir = getAgentDir();
       const settingsPath = path.join(agentDir, "settings.json");
       const visibilityStore = new SkillVisibilityStore(settingsPath, agentDir);
-      const settings = loadSettings(settingsPath);
+
+      let settings: Settings;
+      try {
+        settings = loadSettings(settingsPath);
+      } catch (error) {
+        ctx.ui.notify(
+          `token-burden: ${error instanceof Error ? error.message : String(error)}`,
+          "error"
+        );
+        return;
+      }
+
       const { skills, byName } = loadAllSkills(settings, undefined, agentDir);
 
       const onRunTrace = async (): Promise<BasePromptTraceResult> => {

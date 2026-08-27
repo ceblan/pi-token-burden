@@ -4,6 +4,7 @@ import type { SkillInfo } from "./types.js";
 
 export {
   loadSettings,
+  readSettingsSnapshot,
   removeFrontmatterField,
   saveSettings,
   setFrontmatterField,
