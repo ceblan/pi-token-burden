@@ -418,3 +418,118 @@ describe("property-based persistence", () => {
     );
   });
 });
+
+// -- CRLF preservation --------------------------------------------------------
+
+describe("line ending preservation (CRLF)", () => {
+  // Local copy: the makeSkill helper in this file is scoped inside the
+  // applyChanges block and not visible here.
+  function makeSkill(
+    name: string,
+    filePath: string,
+    allPaths?: string[]
+  ): SkillInfo {
+    return {
+      name,
+      description: `${name} description`,
+      filePath,
+      allPaths: allPaths ?? [filePath],
+      mode: DisableMode.Enabled,
+      tokens: 100,
+      hasDuplicates: (allPaths?.length ?? 1) > 1,
+    };
+  }
+
+  it("keeps CRLF endings when setting a field", () => {
+    const content = "---\r\nname: test\r\n---\r\n# Content\r\n";
+
+    const result = setFrontmatterField(
+      content,
+      "disable-model-invocation",
+      "true"
+    );
+
+    expect(result).toBe(
+      "---\r\nname: test\r\ndisable-model-invocation: true\r\n---\r\n# Content\r\n"
+    );
+  });
+
+  it("keeps CRLF endings when updating an existing field", () => {
+    const content =
+      "---\r\nname: test\r\ndisable-model-invocation: false\r\n---\r\n# Content\r\n";
+
+    const result = setFrontmatterField(
+      content,
+      "disable-model-invocation",
+      "true"
+    );
+
+    expect(result).toBe(
+      "---\r\nname: test\r\ndisable-model-invocation: true\r\n---\r\n# Content\r\n"
+    );
+  });
+
+  it("keeps CRLF endings when removing a field", () => {
+    const content =
+      "---\r\nname: test\r\ndisable-model-invocation: true\r\n---\r\n# Content\r\n";
+
+    const result = removeFrontmatterField(content, "disable-model-invocation");
+
+    expect(result).toBe("---\r\nname: test\r\n---\r\n# Content\r\n");
+  });
+
+  it("uses CRLF for a newly created frontmatter block when the body is CRLF", () => {
+    const content = "# Just markdown\r\nBody\r\n";
+
+    const result = setFrontmatterField(
+      content,
+      "disable-model-invocation",
+      "true"
+    );
+
+    expect(result).toBe(
+      "---\r\ndisable-model-invocation: true\r\n---\r\n# Just markdown\r\nBody\r\n"
+    );
+  });
+
+  it("collapses duplicate keys in CRLF files", () => {
+    const content =
+      "---\r\ndisable-model-invocation: false\r\ndisable-model-invocation: false\r\n---\r\n";
+
+    const result = setFrontmatterField(
+      content,
+      "disable-model-invocation",
+      "true"
+    );
+
+    expect(result).toBe("---\r\ndisable-model-invocation: true\r\n---\r\n");
+  });
+
+  it("keeps CRLF through a full store apply", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "apply-crlf-"));
+    try {
+      const settingsPath = path.join(tmpDir, "settings.json");
+      const skillDir = path.join(tmpDir, "crlf-skill");
+      const skillPath = path.join(skillDir, "SKILL.md");
+      fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(
+        skillPath,
+        "---\r\nname: crlf-skill\r\ndescription: test\r\n---\r\n# Body\r\n"
+      );
+
+      const skill = makeSkill("crlf-skill", skillPath);
+      const byName = new Map([["crlf-skill", skill]]);
+      const changes = new Map<string, DisableMode>([
+        ["crlf-skill", DisableMode.Hidden],
+      ]);
+
+      applyChanges(changes, byName, settingsPath);
+
+      const written = fs.readFileSync(skillPath, "utf8");
+      expect(written).toContain("disable-model-invocation: true\r\n");
+      expect(written).not.toMatch(/(?<!\r)\n/); // no bare LF anywhere
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

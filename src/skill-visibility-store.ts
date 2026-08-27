@@ -37,34 +37,106 @@ export function saveSettings(settings: Settings, settingsPath: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Frontmatter manipulation
+// Frontmatter manipulation (EOL-preserving document model)
 // ---------------------------------------------------------------------------
+
+interface FrontmatterDoc {
+  hasFrontmatter: boolean;
+  lineEnding: "\n" | "\r\n";
+  /** Offset where the frontmatter text starts (after the opening --- line). */
+  start: number;
+  /** Offset where the closing --- line starts. */
+  end: number;
+}
+
+/**
+ * Locate the frontmatter block without modifying the content.
+ *
+ * Delimiters allow trailing spaces/tabs and both LF and CRLF endings. A file
+ * that starts with `---` but has no closing delimiter is treated as having no
+ * frontmatter (a fresh block is prepended on set, matching prior behavior).
+ */
+function parseFrontmatterDocument(raw: string): FrontmatterDoc {
+  const lineEnding: "\n" | "\r\n" = raw.includes("\r\n") ? "\r\n" : "\n";
+  const noFrontmatter: FrontmatterDoc = {
+    hasFrontmatter: false,
+    lineEnding,
+    start: 0,
+    end: 0,
+  };
+
+  const opening = /^---[ \t]*(\r?\n)/.exec(raw);
+  if (!opening) {
+    return noFrontmatter;
+  }
+
+  const start = opening[0].length;
+  const rest = raw.slice(start);
+  const closing = /^---[ \t]*(?:\r?\n|$)/m.exec(rest);
+  if (!closing) {
+    return noFrontmatter;
+  }
+
+  return {
+    hasFrontmatter: true,
+    lineEnding,
+    start,
+    end: start + closing.index,
+  };
+}
+
+/** Split into lines keeping each line's own EOL sequence in the element. */
+function splitLinesPreserve(text: string): string[] {
+  if (text.length === 0) {
+    return [];
+  }
+  return (
+    text.match(/.*(?:\r?\n|$)/g)?.filter((line) => line.length > 0) ?? [text]
+  );
+}
+
+function getEol(line: string): "" | "\n" | "\r\n" {
+  if (line.endsWith("\r\n")) {
+    return "\r\n";
+  }
+  if (line.endsWith("\n")) {
+    return "\n";
+  }
+  return "";
+}
+
+function stripEol(line: string): string {
+  return line.replace(/\r?\n$/, "");
+}
+
+function frontmatterKeyOf(lineBody: string): string | null {
+  const colonIndex = lineBody.indexOf(":");
+  if (colonIndex === -1) {
+    return null;
+  }
+  return lineBody.slice(0, colonIndex).trim();
+}
 
 export function setFrontmatterField(
   content: string,
   key: string,
   value: string
 ): string {
-  if (!content.startsWith("---")) {
-    return `---\n${key}: ${value}\n---\n${content}`;
+  const doc = parseFrontmatterDocument(content);
+
+  if (!doc.hasFrontmatter) {
+    return `---${doc.lineEnding}${key}: ${value}${doc.lineEnding}---${doc.lineEnding}${content}`;
   }
 
-  const endIndex = content.indexOf("\n---", 3);
-  if (endIndex === -1) {
-    return `---\n${key}: ${value}\n---\n${content}`;
-  }
-
-  const frontmatter = content.slice(4, endIndex);
-  const rest = content.slice(endIndex + 4);
-  const lines = frontmatter.split("\n");
+  const frontmatterText = content.slice(doc.start, doc.end);
+  const lines = splitLinesPreserve(frontmatterText);
 
   let replaced = false;
   const nextLines: string[] = [];
   for (const line of lines) {
-    const colonIndex = line.indexOf(":");
-    if (colonIndex !== -1 && line.slice(0, colonIndex).trim() === key) {
+    if (frontmatterKeyOf(stripEol(line)) === key) {
       if (!replaced) {
-        nextLines.push(`${key}: ${value}`);
+        nextLines.push(`${key}: ${value}${getEol(line) || doc.lineEnding}`);
         replaced = true;
       }
       // Subsequent duplicate keys are dropped (collapse to one entry).
@@ -74,37 +146,32 @@ export function setFrontmatterField(
   }
 
   if (!replaced) {
-    nextLines.push(`${key}: ${value}`);
+    const lastIndex = nextLines.length - 1;
+    if (lastIndex >= 0 && !nextLines[lastIndex].endsWith("\n")) {
+      nextLines[lastIndex] = `${nextLines[lastIndex]}${doc.lineEnding}`;
+    }
+    nextLines.push(`${key}: ${value}${doc.lineEnding}`);
   }
 
-  return `---\n${nextLines.join("\n")}\n---${rest}`;
+  return (
+    content.slice(0, doc.start) + nextLines.join("") + content.slice(doc.end)
+  );
 }
 
 export function removeFrontmatterField(content: string, key: string): string {
-  if (!content.startsWith("---")) {
+  const doc = parseFrontmatterDocument(content);
+  if (!doc.hasFrontmatter) {
     return content;
   }
 
-  const endIndex = content.indexOf("\n---", 3);
-  if (endIndex === -1) {
-    return content;
-  }
+  const frontmatterText = content.slice(doc.start, doc.end);
+  const keptLines = splitLinesPreserve(frontmatterText).filter(
+    (line) => frontmatterKeyOf(stripEol(line)) !== key
+  );
 
-  const frontmatter = content.slice(4, endIndex);
-  const rest = content.slice(endIndex + 4);
-  const lines = frontmatter.split("\n");
-
-  const filteredLines = lines.filter((line) => {
-    const colonIndex = line.indexOf(":");
-    if (colonIndex === -1) {
-      return true;
-    }
-
-    const lineKey = line.slice(0, colonIndex).trim();
-    return lineKey !== key;
-  });
-
-  return `---\n${filteredLines.join("\n")}\n---${rest}`;
+  return (
+    content.slice(0, doc.start) + keptLines.join("") + content.slice(doc.end)
+  );
 }
 
 // ---------------------------------------------------------------------------
