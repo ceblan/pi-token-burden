@@ -1,8 +1,7 @@
 # pi-token-burden
 
 A pi extension that parses the assembled system prompt and shows a token-budget
-breakdown via the `/token-burden` slash command. Uses a TUI overlay with
-stacked bar visualization, drill-down table, and fuzzy search.
+breakdown via the `/token-burden` slash command (TUI overlay, drill-down, fuzzy search).
 
 ## Rules
 
@@ -22,132 +21,14 @@ stacked bar visualization, drill-down table, and fuzzy search.
 
 ## Commands
 
-| Command                 | Description                       | ~Time |
-| ----------------------- | --------------------------------- | ----- |
-| `pnpm run test`         | Run Vitest unit tests (105 tests) | <1s   |
-| `pnpm run test:e2e`     | Run e2e TUI tests (requires tmux) | ~30s  |
-| `pnpm run typecheck`    | TypeScript type checking          | ~2s   |
-| `pnpm run lint`         | Run oxlint linter                 | <1s   |
-| `pnpm run lint:fix`     | Run oxlint with auto-fix          | <1s   |
-| `pnpm run format`       | Format code with oxfmt            | <1s   |
-| `pnpm run format:check` | Check formatting without writing  | <1s   |
-| `pnpm run deadcode`     | Detect dead code with knip        | ~2s   |
-| `pnpm run duplicates`   | Detect duplicate code with jscpd  | ~1s   |
-| `pnpm run check`        | Run all checks and report summary | ~8s   |
-| `pnpm run fix`          | Auto-fix lint and formatting      | <1s   |
-| `pnpm run changelog`    | Regenerate CHANGELOG.md           | <1s   |
+Key commands — full list in `lat.md/guides/commands.md`.
 
-## File Map
-
-| Path                      | Purpose                                                         |
-| ------------------------- | --------------------------------------------------------------- |
-| `src/index.ts`            | Extension entry: registers `/token-burden` command, wires trace |
-| `src/parser.ts`           | Parses system prompt into sections (base, AGENTS, skills, etc)  |
-| `src/report-view.ts`      | TUI overlay: `BudgetOverlay` class, ANSI rendering, input       |
-| `src/utils.ts`            | `fuzzyFilter()` for search, `buildBarSegments()` for bar chart  |
-| `src/types.ts`            | Shared types: `ParsedPrompt`, `TableItem`, `PromptSection`      |
-| `src/base-trace/`         | Source tracing: attribution, extension inspector, cache         |
-| `src/*.test.ts`           | Colocated unit tests (10 files, 105 tests total)                |
-| `src/e2e/tmux-harness.ts` | Tmux session helper for e2e TUI testing                         |
-| `src/e2e/*.test.ts`       | E2e TUI tests (overlay, skill-toggle, trace)                    |
-| `vitest.config.e2e.ts`    | Vitest config for e2e tests (30s timeout)                       |
-| `CHANGELOG.md`            | Auto-generated changelog (do not edit manually)                 |
-| `scripts/`                | Shell scripts (`check.sh`, `fix.sh`)                            |
-| `docs/plans/`             | Implementation plans                                            |
-
-## Architecture
-
-```
-index.ts ──→ parser.ts ──→ types.ts
-   │              │
-   ├──→ report-view.ts ──→ utils.ts ──→ types.ts
-   │
-   └──→ base-trace/ ──→ attribution.ts, base-lines.ts, extension-inspector.ts, cache.ts
-```
-
-**Data flow:** `ctx.getSystemPrompt()` → `parseSystemPrompt()` → `ParsedPrompt`
-→ `BudgetOverlay` (TUI overlay with `ctx.ui.custom()`).
-
-**Trace flow (on-demand):** `discoverAndLoadExtensions()` → `extractContributions()`
-→ `extractBaseLines()` → `attributeBasePrompt()` → `BasePromptTraceResult`.
-
-The parser identifies sections by structural markers in the assembled prompt:
-`# Project Context`, `<available_skills>`, `Current date and time:`, and
-pi-docs terminal markers. Token estimation uses BPE tokenization via `gpt-tokenizer` (`o200k_base` encoding).
-
-**Key classes:**
-
-- `BudgetOverlay` (`report-view.ts`) — stateful TUI component handling keyboard
-  navigation, drill-down into children (AGENTS files, individual skills), and
-  fuzzy search via `/`.
-
-## Utilities
-
-| Need                         | Use                  | Location        |
-| ---------------------------- | -------------------- | --------------- |
-| Fuzzy-match filter items     | `fuzzyFilter()`      | `src/utils.ts`  |
-| Proportional bar segments    | `buildBarSegments()` | `src/utils.ts`  |
-| BPE token count (o200k_base) | `estimateTokens()`   | `src/parser.ts` |
-
-## Tooling
-
-| Tool                | Config                                    | Purpose                                 |
-| ------------------- | ----------------------------------------- | --------------------------------------- |
-| oxlint + ultracite  | `.oxlintrc.json`                          | Linting with Factory rules              |
-| oxfmt               | `.oxfmtrc.jsonc`                          | Code formatting                         |
-| TypeScript          | `tsconfig.json`                           | Type checking (strict mode)             |
-| Vitest              | `vitest.config.ts`                        | Unit testing                            |
-| husky + lint-staged | `.husky/pre-commit`, `.lintstagedrc.json` | Pre-commit hooks                        |
-| knip                | `knip.json`                               | Dead code detection                     |
-| jscpd               | `.jscpd.json`                             | Duplicate code detection (1% threshold) |
-| changelogen         | `package.json` (`version` script)         | Changelog generation from commits       |
-| GitHub Actions      | `.github/workflows/check.yml`             | CI pipeline                             |
-
-## Testing
-
-- Framework: Vitest
-- Unit tests: `*.test.ts` colocated with source files, run with `pnpm run test`
-- E2e tests: `src/e2e/*.test.ts`, run with `pnpm run test:e2e` (requires tmux)
-- E2e harness: `TmuxHarness` class manages tmux sessions, sendKeys, capture, waitFor
-- Manual: `pi -e ./src/index.ts` then type `/token-burden`
-
-## Deployment
-
-```bash
-# Install from npm
-pi install npm:pi-token-burden
-
-# Install from git
-pi install git:github.com/Whamp/pi-token-burden
-
-# Or try for a single session
-pi -e git:github.com/Whamp/pi-token-burden
-
-# Local dev: symlink into global extensions
-ln -s "$(pwd)" ~/.pi/agent/extensions/pi-token-burden
-```
-
-## Releasing
-
-```bash
-npm version patch   # bumps version, updates CHANGELOG.md, commits, tags
-git push --tags && git push
-npm publish
-```
-
-The `version` script runs changelogen automatically to update `CHANGELOG.md`
-before the version commit. Use `patch`, `minor`, or `major` as appropriate.
-
-## Pre-commit
-
-On every commit, husky runs:
-
-1. `lint-staged` (oxlint fix + oxfmt on staged files)
-
-## CI
-
-`.github/workflows/check.yml` runs `pnpm run check` on push to `main` and on
-pull requests.
+| Command             | Description                       | ~Time |
+| ------------------- | --------------------------------- | ----- |
+| `pnpm run check`    | Run all checks and report summary | ~8s   |
+| `pnpm run test`     | Run Vitest unit tests             | <1s   |
+| `pnpm run test:e2e` | Run e2e TUI tests (requires tmux) | ~30s  |
+| `pnpm run fix`      | Auto-fix lint and formatting      | <1s   |
 
 ## Boundaries
 
@@ -169,9 +50,11 @@ pull requests.
 - Commit secrets or credentials
 - Use `any` types (use proper TypeBox schemas)
 
-## Napkin — Agent Documentation
+## Agent documentation
 
-This project uses a repository-local napkin vault for agent-facing documentation.
-**Start here when orienting:** run `napkin overview`, then `napkin search "<topic>"` and `napkin read "<note>"` as needed.
-Key entry points: `NAPKIN.md`, `architecture/Token Budget Pipeline.md`, `decisions/Key Decisions.md`, and `guides/Napkin Workflow.md`.
-Use napkin notes for durable architecture, decision, and workflow context; capture why decisions were made, not routine git-change details.
+Architecture, decisions, file map, tooling, testing, and deployment live in the
+`lat.md/` knowledge graph — load on demand to keep this prompt lean.
+
+- Orient: `lat search "<topic>"`, `lat locate "Section"`, `lat refs "file#Section"`, `lat section "id"`.
+- Entry points: `lat.md/index.md`, `lat.md/architecture/token-budget-pipeline.md`, `lat.md/decisions/key-decisions.md`.
+- Validate after edits: `lat check`.

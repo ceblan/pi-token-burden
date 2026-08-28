@@ -8,6 +8,5 @@ dist/
 coverage/
 
 .codegraph/
-.napkin/search-cache.json
 .obsidian/
 .trash/

@@ -6,7 +6,6 @@
     "node_modules/",
     "vendor/",
     "scripts/",
-    ".napkin/",
     "src/e2e/**"
   ],
   "jsPlugins": [

@@ -1,10 +1,6 @@
----
-tags:
-  - decisions
-  - pi-token-burden
----
-
 # Key Decisions
+
+Architectural and product decisions preserved as durable context: token counting, overlay design, skill management, editor handoff, base-prompt tracing, and tool-definition accounting.
 
 ## Token counting
 
@@ -40,8 +36,8 @@ Use deterministic one-pass introspection rather than subprocess diffing. Attribu
 
 ## Tool definitions count
 
-Include tool/function schemas from `pi.getAllTools()` in the budget. These schemas are sent through the LLM tool-calling API and can be a substantial hidden context cost even when absent from literal system-prompt text.
+Include tool / function schemas from `pi.getAllTools()` in the budget. These schemas are sent through the LLM tool-calling API and can be a substantial hidden context cost even when absent from literal system-prompt text.
 
 ## Documentation system
 
-Agent-facing project documentation now uses napkin instead of Brain `.memory/` files. The root `NAPKIN.md` is the level-0 overview, with topic notes under `architecture/`, `decisions/`, `guides/`, and `changelog/`.
+Agent-facing project documentation uses the lat.md knowledge graph in the `lat.md/` directory (migrated from a napkin vault, which earlier replaced Brain `.memory/` files). See [[decisions/documentation-system-migration#Documentation System Migration]] for the Brain → napkin migration rationale.
