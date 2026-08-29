@@ -15,6 +15,7 @@ import type { Settings, SkillInfo } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Atomic file writes
+// @lat: [[architecture/skill-visibility-store#Atomic writes with divergence guard]]
 // ---------------------------------------------------------------------------
 
 interface AtomicWriteGuard {
@@ -107,6 +108,8 @@ export function writeFileSyncAtomic(
 
 // ---------------------------------------------------------------------------
 // Settings file I/O
+// @lat: [[architecture/skill-visibility-store#Snapshot isolation]]
+// @lat: [[architecture/skill-visibility-store#Settings corruption guard#Shape validation]]
 // ---------------------------------------------------------------------------
 
 interface SettingsSnapshot {

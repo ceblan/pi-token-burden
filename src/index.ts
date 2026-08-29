@@ -248,7 +248,7 @@ const extension: ExtensionFactory = (pi) => {
         };
       };
 
-      let needsReload = false;
+      let needsReload = false; // @lat: [[architecture/skill-visibility-store#Auto-reload after save]]
 
       await showReport(
         parsed,

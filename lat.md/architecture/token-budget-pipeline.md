@@ -53,7 +53,8 @@ Project files and their roles in the pipeline.
 | `src/types.ts`                              | Shared types: `ParsedPrompt`, `PromptSection`, `TableItem`                                                                   |
 | `src/enums.ts`                              | `DisableMode` enum for skill states                                                                                          |
 | `src/skills.ts`                             | Filesystem skill discovery matching pi scan order ([[src/skills.ts#scanSkillDir]], [[src/skills.ts#loadAllSkills]])          |
-| `src/skills-persistence.ts`                 | Settings / frontmatter persistence for skill toggles                                                                         |
+| `src/skills-persistence.ts`                 | Settings / frontmatter persistence for skill toggles (compat re-exports from skill-visibility-store)                            |
+| `src/skill-visibility-store.ts`            | Atomic writes, snapshot isolation, shape validation, and guarded applyChanges ([[architecture/skill-visibility-store]])         |
 | `src/base-trace/`                           | Attribution subsystem for base-prompt source tracing                                                                         |
 | `src/*.test.ts`, `src/base-trace/*.test.ts` | Colocated unit tests (192 tests, 16 files)                                                                                   |
 | `src/e2e/tmux-harness.ts`                   | Tmux automation for e2e TUI tests ([[src/e2e/tmux-harness.ts#TmuxHarness]])                                                  |

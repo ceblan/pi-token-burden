@@ -7,3 +7,4 @@ Token-budget breakdown extension for the pi coding agent; this file is the direc
 - [[decisions]] — architectural and product decisions.
 - [[guides]] — workflows.
 - [[changelog]] — historical commit memory.
+- [[last-commit]] — last-tracked git commit for the documentation sync agent.
