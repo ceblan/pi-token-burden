@@ -4,9 +4,12 @@
  * The system prompt built by pi follows a predictable structure:
  *   1. Base prompt (tools, guidelines, pi docs reference)
  *   2. Optional SYSTEM.md / APPEND_SYSTEM.md content
- *   3. Project Context (AGENTS.md files, each under `## <path>`)
- *   4. Skills preamble + <available_skills> block
- *   5. Date/time + cwd metadata
+ *   3. Project Context (AGENTS.md/CLAUDE.md files, each inside
+ *      `<project_instructions path="...">` tags; legacy pi used
+ *      `## <path>` headings)
+ *   4. Skills section: pi >=1.0 wraps it as `<skills>...</skills>`;
+ *      older versions emitted the preamble sentence + <available_skills>
+ *   5. Metadata footer (date/time and/or `<cwd>` section)
  */
 
 import { encode } from "gpt-tokenizer/encoding/o200k_base";
@@ -112,7 +115,24 @@ function findBasePromptEnd(
 function findMetadataStart(prompt: string): number {
   const currentDateIdx = prompt.lastIndexOf("\nCurrent date:");
   const legacyDateTimeIdx = prompt.lastIndexOf("\nCurrent date and time:");
-  return Math.max(currentDateIdx, legacyDateTimeIdx);
+  const cwdSectionIdx = prompt.indexOf("\n\n<cwd>\n");
+  return Math.max(currentDateIdx, legacyDateTimeIdx, cwdSectionIdx);
+}
+
+/**
+ * Find where the skills section starts.
+ *
+ * pi >=1.0 emits the skills block as a structured `<skills>` section
+ * (`<skills>\nThe following skills...`), so the preamble sentence is no
+ * longer preceded by a blank line. Fall back to the legacy marker.
+ *
+ * @lat: [[lat.md/architecture/token-budget-pipeline#Section boundary detection]]
+ */
+function findSkillsSectionStart(prompt: string): number {
+  return firstPositive(
+    prompt.indexOf("\n\n<skills>\n"),
+    prompt.indexOf("\n\nThe following skills provide specialized instructions")
+  );
 }
 
 function isPiContextFilePath(filePath: string): boolean {
@@ -205,17 +225,24 @@ function appendReconciliationChild(
 
 /** Compute the skills section end index, avoiding nested ternaries. */
 function findSkillsSectionEnd(
+  prompt: string,
+  skillsStartIdx: number,
   availableSkillsEnd: number,
-  dateLineIdx: number,
-  promptLength: number
+  dateLineIdx: number
 ): number {
+  if (skillsStartIdx >= 0) {
+    const closeIdx = prompt.indexOf("\n</skills>", skillsStartIdx);
+    if (closeIdx !== -1) {
+      return closeIdx + "\n</skills>".length;
+    }
+  }
   if (availableSkillsEnd !== -1) {
     return availableSkillsEnd + "</available_skills>".length;
   }
   if (dateLineIdx !== -1) {
     return dateLineIdx;
   }
-  return promptLength;
+  return prompt.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,9 +266,7 @@ export function parseSystemPrompt(prompt: string): ParsedPrompt {
     prompt.indexOf("\n\n# Project Context\n"),
     prompt.indexOf("\n\n<project_context>\n")
   );
-  const skillsPreambleIdx = prompt.indexOf(
-    "\n\nThe following skills provide specialized instructions"
-  );
+  const skillsSectionIdx = findSkillsSectionStart(prompt);
   const availableSkillsStart = prompt.indexOf("<available_skills>");
   const availableSkillsEnd = prompt.indexOf("</available_skills>");
   const dateLineIdx = findMetadataStart(prompt);
@@ -250,12 +275,12 @@ export function parseSystemPrompt(prompt: string): ParsedPrompt {
   const baseEnd = findBasePromptEnd(
     prompt,
     projectCtxIdx,
-    skillsPreambleIdx,
+    skillsSectionIdx,
     dateLineIdx
   );
   const nextSectionStart =
     projectCtxIdx === -1
-      ? firstPositive(skillsPreambleIdx, dateLineIdx)
+      ? firstPositive(skillsSectionIdx, dateLineIdx)
       : projectCtxIdx;
 
   let baseSectionEnd = baseEnd >= 0 ? baseEnd : prompt.length;
@@ -288,7 +313,7 @@ export function parseSystemPrompt(prompt: string): ParsedPrompt {
   // 2. Project Context / AGENTS.md and CLAUDE.md files
   if (projectCtxIdx !== -1) {
     const contextStart = projectCtxIdx;
-    const contextEndBoundary = firstPositive(skillsPreambleIdx, dateLineIdx);
+    const contextEndBoundary = firstPositive(skillsSectionIdx, dateLineIdx);
     const contextEnd =
       contextEndBoundary >= 0 ? contextEndBoundary : prompt.length;
     const contextBlock = prompt.slice(contextStart, contextEnd);
@@ -326,12 +351,13 @@ export function parseSystemPrompt(prompt: string): ParsedPrompt {
   }
 
   // 3. Skills section
-  if (skillsPreambleIdx !== -1) {
-    const skillsSectionStart = skillsPreambleIdx;
+  if (skillsSectionIdx !== -1) {
+    const skillsSectionStart = skillsSectionIdx;
     const skillsSectionEnd = findSkillsSectionEnd(
+      prompt,
+      skillsSectionIdx,
       availableSkillsEnd,
-      dateLineIdx,
-      prompt.length
+      dateLineIdx
     );
     const parsedSkillEntries: ParsedSkillEntry[] = [];
     if (availableSkillsStart !== -1 && availableSkillsEnd !== -1) {

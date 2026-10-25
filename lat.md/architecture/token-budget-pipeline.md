@@ -40,6 +40,14 @@ On-demand attribution of the Base prompt to its contributing sources.
 
 Tracing is user-triggered with `t` on the Base prompt so the default overlay stays fast.
 
+## Section boundary detection
+
+How the parser locates each section when pi's system-prompt format changes between versions.
+
+The parser keys on structural markers. pi >=1.0 renders skills as a wrapped structured section (`<skills>…</skills>`), so the legacy marker `\n\nThe following skills…` no longer matches the preamble sentence (it sits after `<skills>\n`, not a blank line). [[src/parser.ts#parseSystemPrompt]] therefore resolves the skills start via [[src/parser.ts#findSkillsSectionStart]] (wrapped `<skills>` marker first, legacy preamble fallback) and the end via `findSkillsSectionEnd` (closing `</skills>`, then legacy `<available_skills>` tail). Metadata detection also accepts the `<cwd>` section, since newer prompts may omit the `Current date:` footer.
+
+Failure mode this guards against: if neither skills marker matched, the Context files section extended to the end of the prompt, the whole skills XML block was misreported as "Context wrapper / overhead", and the Skills section showed 0%.
+
 ## File map
 
 Project files and their roles in the pipeline.
@@ -56,7 +64,7 @@ Project files and their roles in the pipeline.
 | `src/skills-persistence.ts`                 | Settings / frontmatter persistence for skill toggles (compat re-exports from skill-visibility-store)                            |
 | `src/skill-visibility-store.ts`            | Atomic writes, snapshot isolation, shape validation, and guarded applyChanges ([[architecture/skill-visibility-store]])         |
 | `src/base-trace/`                           | Attribution subsystem for base-prompt source tracing                                                                         |
-| `src/*.test.ts`, `src/base-trace/*.test.ts` | Colocated unit tests (192 tests, 16 files)                                                                                   |
+| `src/*.test.ts`, `src/base-trace/*.test.ts` | Colocated unit tests (194 tests, 16 files)                                                                                   |
 | `src/e2e/tmux-harness.ts`                   | Tmux automation for e2e TUI tests ([[src/e2e/tmux-harness.ts#TmuxHarness]])                                                  |
 | `src/e2e/*.test.ts`                         | E2e TUI tests (4 files)                                                                                                      |
 | `vitest.config.e2e.ts`                      | Vitest config for e2e tests (30s timeout)                                                                                    |

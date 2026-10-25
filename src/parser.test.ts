@@ -350,6 +350,61 @@ describe("parseSystemPrompt()", () => {
     ).toBeTruthy();
   });
 
+  it("parses pi >=1.0 <skills>-wrapped section without inflating context overhead", () => {
+    const wrappedSkills = [
+      "",
+      "",
+      "<skills>",
+      "The following skills provide specialized instructions for specific tasks.",
+      "Use the read tool to load a skill's file when the task matches its description.",
+      "",
+      skillsBlock,
+      "</skills>",
+    ].join("\n");
+    const prompt = basePrompt + agentsBlock + wrappedSkills + currentMetadata;
+    const result = parseSystemPrompt(prompt);
+
+    const contextSection = result.sections.find((s) =>
+      s.label.includes("Context files")
+    );
+    const skillsSection = result.sections.find((s) =>
+      s.label.startsWith("Skills")
+    );
+
+    expect(skillsSection).toBeDefined();
+    expect(result.skills).toHaveLength(2);
+    // Context section must end at <skills>, so its overhead stays tiny
+    // (just the <project_context> envelope, not the whole skills block).
+    const overheadChild = contextSection?.children?.find((child) =>
+      child.label.includes("overhead")
+    );
+    expect(overheadChild?.tokens ?? 0).toBeLessThan(50);
+    // Skills section covers the wrapped block and reconciles.
+    expect(skillsSection?.children?.map((c) => c.label)).toStrictEqual(
+      expect.arrayContaining(["brainstorming", "tdd"])
+    );
+    expect(childTokenSum(skillsSection)).toBe(skillsSection?.tokens);
+  });
+
+  it("parses <cwd> section as metadata when no date footer exists", () => {
+    const wrappedSkills = [
+      "",
+      "",
+      "<skills>",
+      "The following skills provide specialized instructions for specific tasks.",
+      skillsBlock,
+      "</skills>",
+    ].join("\n");
+    const prompt = `${basePrompt}${agentsBlock}${wrappedSkills}\n\n<cwd>\n/home/user/project\n</cwd>`;
+    const result = parseSystemPrompt(prompt);
+
+    const metadataSection = result.sections.find((s) =>
+      s.label.startsWith("Metadata")
+    );
+    expect(metadataSection).toBeDefined();
+    expect(metadataSection?.content).toContain("/home/user/project");
+  });
+
   it("handles a minimal prompt with no optional sections", () => {
     const prompt = `You are a helpful assistant.${metadata}`;
     const result = parseSystemPrompt(prompt);
