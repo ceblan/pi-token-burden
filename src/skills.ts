@@ -11,6 +11,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import {
+  createSyntheticSourceInfo,
+  formatSkillsForPrompt,
+} from "@earendil-works/pi-coding-agent";
 import { parse as parseYaml } from "yaml";
 
 import { DisableMode } from "./enums.js";
@@ -421,6 +425,7 @@ export function formatSkillPromptEntry(skill: {
   ].join("\n");
 }
 
+// @lat: [[decisions/key-decisions#Key Decisions#Skill management]]
 export function formatSkillsPromptSection(
   skills: {
     name: string;
@@ -436,15 +441,22 @@ export function formatSkillsPromptSection(
     return "";
   }
 
-  return [
-    "\n\nThe following skills provide specialized instructions for specific tasks.",
-    "Use the read tool to load a skill's file when the task matches its description.",
-    "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
-    "",
-    "<available_skills>",
-    ...visibleSkills.map(formatSkillPromptEntry),
-    "</available_skills>",
-  ].join("\n");
+  return formatSkillsForPrompt(
+    visibleSkills.map((skill) => {
+      const baseDir = path.dirname(skill.filePath);
+      return {
+        name: skill.name,
+        description: skill.description,
+        filePath: skill.filePath,
+        baseDir,
+        sourceInfo: createSyntheticSourceInfo(skill.filePath, {
+          source: "local",
+          baseDir,
+        }),
+        disableModelInvocation: false,
+      };
+    })
+  );
 }
 
 export function estimateSkillsPromptSectionTokens(

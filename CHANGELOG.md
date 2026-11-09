@@ -1,7 +1,7 @@
 # Changelog
 
 
-## v0.6.5
+## 0.6.5
 
 [compare changes](https://github.com/Whamp/pi-token-burden/compare/v0.6.4...v0.6.5)
 

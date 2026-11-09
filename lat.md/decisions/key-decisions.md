@@ -18,7 +18,7 @@ Skill management is integrated into the Skills drill-down. Skills use a three-st
 - Hidden — removed from model invocation / system prompt burden.
 - Disabled — unavailable.
 
-The overlay updates token impact immediately and persists changes only when the user saves.
+The overlay updates token impact immediately and persists changes only when the user saves. Prompt-section reconstruction delegates to pi's public `formatSkillsForPrompt` through [[src/skills.ts#formatSkillsPromptSection]], so each host owns its skills guidance and the estimate follows the actual wire without version checks or a copied preamble.
 
 ## Skill discovery
 

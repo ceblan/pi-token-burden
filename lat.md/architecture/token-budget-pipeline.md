@@ -64,7 +64,7 @@ Project files and their roles in the pipeline.
 | `src/skills-persistence.ts`                 | Settings / frontmatter persistence for skill toggles (compat re-exports from skill-visibility-store)                            |
 | `src/skill-visibility-store.ts`            | Atomic writes, snapshot isolation, shape validation, and guarded applyChanges ([[architecture/skill-visibility-store]])         |
 | `src/base-trace/`                           | Attribution subsystem for base-prompt source tracing                                                                         |
-| `src/*.test.ts`, `src/base-trace/*.test.ts` | Colocated unit tests (194 tests, 16 files)                                                                                   |
+| `src/*.test.ts`, `src/base-trace/*.test.ts` | Colocated unit tests (195 tests, 17 files)                                                                                   |
 | `src/e2e/tmux-harness.ts`                   | Tmux automation for e2e TUI tests ([[src/e2e/tmux-harness.ts#TmuxHarness]])                                                  |
 | `src/e2e/*.test.ts`                         | E2e TUI tests (4 files)                                                                                                      |
 | `vitest.config.e2e.ts`                      | Vitest config for e2e tests (30s timeout)                                                                                    |
